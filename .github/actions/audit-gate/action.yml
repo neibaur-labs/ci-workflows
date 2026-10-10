@@ -1,0 +1,36 @@
+name: Audit gate
+description: >-
+  Fails a pull request that introduces a high or critical advisory. Advisories
+  already on the base branch are warnings. Call it from a job that has checked
+  out the repository with fetch-depth 0 and set up pnpm and Node 22.18 or later.
+
+runs:
+  using: composite
+  steps:
+    - name: Audit gate (fails on newly introduced advisories)
+      # Audits the base branch and the pull request with pnpm and compares
+      # them. The decision is made by packages/checks in this repository, which
+      # is unit-tested, at the commit the caller pinned: a pull request cannot
+      # change the gate that judges it. If pnpm audit returns no advisory
+      # data, the command fails closed.
+      shell: bash
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        GATE: ${{ github.action_path }}/../../../packages/checks/bin/audit-gate.mjs
+      run: |
+        set -euo pipefail
+        pnpm install --frozen-lockfile
+        audit() { # <dir> <out.json>
+          (cd "$1" && pnpm audit --json > "$2") || true
+        }
+        audit "$PWD" "$RUNNER_TEMP/head.json"
+        if [ -z "$BASE_SHA" ]; then
+          node "$GATE" branch "$RUNNER_TEMP/head.json"
+          exit 0
+        fi
+        mkdir -p "$RUNNER_TEMP/base"
+        for f in package.json pnpm-lock.yaml pnpm-workspace.yaml; do
+          git show "$BASE_SHA:$f" > "$RUNNER_TEMP/base/$f" 2>/dev/null || rm -f "$RUNNER_TEMP/base/$f"
+        done
+        audit "$RUNNER_TEMP/base" "$RUNNER_TEMP/base.json"
+        node "$GATE" pull-request "$RUNNER_TEMP/base.json" "$RUNNER_TEMP/head.json"

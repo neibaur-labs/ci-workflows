@@ -1,0 +1,54 @@
+{
+  "name": "ci-workflows",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "lint": "eslint . && prettier --check .",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "test": "vitest run --coverage",
+    "validate": "pnpm lint && pnpm typecheck && pnpm test",
+    "format": "prettier --write .",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "21.2.3",
+    "@commitlint/config-conventional": "21.2.3",
+    "@eslint/js": "10.0.1",
+    "@vitest/coverage-v8": "5.0.2",
+    "eslint": "10.11.0",
+    "husky": "9.1.7",
+    "lint-staged": "17.6.0",
+    "prettier": "3.9.9",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.1",
+    "vitest": "5.0.2"
+  },
+  "pnpm": {
+    "overrides": {
+      "brace-expansion": "5.0.12",
+      "fast-uri": "3.1.8",
+      "js-yaml": "4.3.2",
+      "postcss": "8.5.23",
+      "nanoid": "3.3.19",
+      "source-map-js": "1.2.2",
+      "why-is-node-running": "3.2.1"
+    }
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "prettier --write",
+      "eslint --fix"
+    ],
+    "*.{json,md,yaml,yml}": [
+      "prettier --write"
+    ]
+  }
+}

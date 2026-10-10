@@ -1,0 +1,140 @@
+name: Security scan
+description: >-
+  Secret scan (gitleaks), SAST (Semgrep), forbidden patterns, invisible-payload
+  scan, and batch discipline. Call it from a job that has checked out the
+  repository with fetch-depth 0.
+
+runs:
+  using: composite
+  steps:
+    - name: Secret scan (gitleaks)
+      # gitleaks exits non-zero if any secret is detected, which fails this check.
+      # It scans the full git history (fetch-depth: 0 above), so a secret that
+      # was committed and later removed is still caught. The GHCR image is
+      # pinned by digest. v8.30.1
+      shell: bash
+      run: |
+        docker run --rm -v "${{ github.workspace }}:/repo" -w /repo \
+          ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+          git --redact --no-banner --exit-code 1 /repo
+
+    - name: SAST (semgrep)
+      # p/default is a curated registry pack; --error fails on findings,
+      # --metrics=off keeps it from phoning home. Add a committed .semgrep.yml
+      # or extra --config packs (p/owasp-top-ten, p/typescript) per project.
+      # Image pinned to v1.166.0.
+      shell: bash
+      run: >
+        docker run --rm -v "$PWD:/src" -w /src
+        semgrep/semgrep:1.166.0@sha256:c180f0c93a17b420c0af5006214a29d3c747c5459c732b740191adf657dd0068
+        semgrep scan --config p/default --error --metrics=off --quiet
+
+    - name: Forbidden pattern check
+      shell: bash
+      run: |
+        set +e   # GitHub runs bash with -e by default; we handle grep's exit codes ourselves
+        pattern='eval\(|new Function|child_process|dangerouslySetInnerHTML'
+        dirs=()
+        for d in apps packages src; do
+          [ -d "$d" ] && dirs+=("$d")
+        done
+        if [ "${#dirs[@]}" -eq 0 ]; then
+          echo "No source directories present to scan."
+          exit 0
+        fi
+        grep -rnE "$pattern" \
+          --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' \
+          "${dirs[@]}"
+        status=$?
+        if [ "$status" -eq 0 ]; then
+          echo "::error::Forbidden pattern found"; exit 1
+        elif [ "$status" -gt 1 ]; then
+          echo "::error::Forbidden-pattern scan errored (grep exit $status)"; exit 1
+        fi
+        echo "No forbidden patterns found."
+
+    - name: Invisible-payload scan (zero-width / bidi)
+      # Rejects the invisible-payload and Trojan-Source vectors: zero-width
+      # space/joiners (U+200B-200D), word joiner (U+2060), BOM/ZWNBSP (U+FEFF),
+      # bidi embeddings/overrides (U+202A-202E), and isolates (U+2066-2069).
+      # Matches the raw UTF-8 byte sequences under LC_ALL=C so it does not
+      # depend on the runner's locale (a code-point class needs a UTF-8 locale
+      # that grep -P will not always honor). Legitimate accents/CJK pass.
+      shell: bash
+      run: |
+        set +e
+        dirs=()
+        for d in apps packages src; do
+          [ -d "$d" ] && dirs+=("$d")
+        done
+        if [ "${#dirs[@]}" -eq 0 ]; then
+          echo "No source directories present to scan."
+          exit 0
+        fi
+        pat='\xe2\x80[\x8b-\x8d\xaa-\xae]|\xe2\x81[\xa0\xa6-\xa9]|\xef\xbb\xbf'
+        hits=$(LC_ALL=C grep -rlnP "$pat" \
+          --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' \
+          --include='*.json' --include='*.md' --include='*.yml' --include='*.yaml' \
+          "${dirs[@]}")
+        if [ -n "$hits" ]; then
+          echo "::error::Invisible Unicode (zero-width/bidi) detected in:"
+          echo "$hits"
+          exit 1
+        fi
+        echo "No invisible-payload characters found."
+
+    - name: Batch discipline (tests vs implementation)
+      # On a PR, a change to an EXISTING test (modified, deleted, or renamed)
+      # must sit in its own commit, ahead of every implementation commit, so
+      # a test stays an objective baseline that is reviewed on its own and
+      # cannot be quietly weakened. Newly added test files do not count: new
+      # code is expected to arrive with its tests (AGENTS.md tests-first
+      # commits). Merge commits are skipped: their diff holds changes imported
+      # from the base branch, which this PR did not author.
+      # Skips on push to main (no PR context).
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        base="${{ github.event.pull_request.base.sha }}"
+        head="${{ github.event.pull_request.head.sha }}"
+
+        if [ -z "$base" ]; then
+          echo "Not a pull request; skipping batch-discipline check."
+          exit 0
+        fi
+
+        mb=$(git merge-base "$base" "$head")
+        implementation_seen=false
+
+        while read -r commit; do
+          files=$(git diff --name-only --diff-filter=a "${commit}^1" "$commit")
+
+          tests=$(printf '%s\n' "$files" \
+            | grep -E '(^|/)tests?/|\.test\.|\.spec\.' || true)
+
+          impl=$(printf '%s\n' "$files" \
+            | grep -E '(^|/)(src|packages|apps)/' \
+            | grep -vE '(^|/)tests?/|\.test\.|\.spec\.' || true)
+
+          if [ -n "$tests" ] && [ -n "$impl" ]; then
+            echo "::error::Commit $commit modifies existing tests and implementation together."
+            echo "--- modified/deleted test files ---"
+            echo "$tests"
+            echo "--- implementation files ---"
+            echo "$impl"
+            exit 1
+          fi
+
+          if [ -n "$tests" ] && [ "$implementation_seen" = true ]; then
+            echo "::error::Commit $commit modifies existing tests after implementation changes began."
+            echo "$tests"
+            exit 1
+          fi
+
+          if [ -n "$impl" ]; then
+            implementation_seen=true
+          fi
+        done < <(git rev-list --reverse --no-merges "$mb..$head")
+
+        echo "Batch discipline OK: test changes are isolated and precede implementation."

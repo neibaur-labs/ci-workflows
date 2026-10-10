@@ -1,0 +1,19 @@
+set -e
+pnpm exec lint-staged
+
+if command -v gitleaks >/dev/null 2>&1; then
+  # gitleaks protect --staged was removed in v8.x (not listed in `gitleaks --help`).
+  # Pipe the staged diff directly to `gitleaks stdin` so the exact bytes being
+  # committed are scanned, regardless of gitleaks version or working-tree state.
+  git diff --cached | gitleaks stdin --redact --no-banner --config "$(git rev-parse --show-toplevel)/.gitleaks.toml"
+else
+  echo ""
+  echo "ERROR: gitleaks is not installed. Cannot run secret scan."
+  echo ""
+  echo "Install gitleaks before committing:"
+  echo "  Windows: winget install gitleaks"
+  echo "  macOS:   brew install gitleaks"
+  echo "  Linux:   https://github.com/gitleaks/gitleaks#installing"
+  echo ""
+  exit 1
+fi

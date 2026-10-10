@@ -1,0 +1,7 @@
+[extend]
+   useDefault = true
+[[rules]]
+id = "aws-access-key-id-standalone"
+description = "AWS Access Key ID without accompanying secret"
+regex = '''\b(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}\b'''
+tags = ["aws", "key-id"]
