@@ -51,6 +51,33 @@ block. If `pnpm audit` returns no advisory data, it fails closed.
 
 It needs pnpm and Node 22.18 or later, and a checkout with `fetch-depth: 0`.
 
+### `dependency-audit`
+
+For a scheduled job. It audits the lockfile with pnpm and keeps one tracking
+issue, "Dependency audit: open advisories", up to date:
+
+- high and critical advisories, with a 7-day deadline;
+- moderate and low advisories, with a 30-day target. No check is gated on them.
+
+It comments again only when the set of open advisories changes, and says so
+once when nothing is open any more. If `pnpm audit` returns no advisory data,
+it fails closed.
+
+```yaml
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@<sha>
+      - uses: pnpm/action-setup@<sha>
+      - uses: actions/setup-node@<sha>
+        with: { node-version: 22 }
+      - uses: neibaur-labs/ci-workflows/.github/actions/dependency-audit@<sha>
+```
+
 ## Why actions and not reusable workflows
 
 A job that calls a reusable workflow reports its check as
