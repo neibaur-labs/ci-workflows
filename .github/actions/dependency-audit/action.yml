@@ -1,0 +1,72 @@
+name: Dependency audit
+description: >-
+  Audits the lockfile with pnpm and keeps one tracking issue up to date: high
+  and critical advisories with a 7-day deadline, moderate and low ones with a
+  30-day target. Call it from a scheduled job that has checked out the
+  repository, set up pnpm and Node 22.18 or later, and has issues: write.
+
+inputs:
+  token:
+    description: Token used to read and write issues in the calling repository.
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Audit and report
+      # The issue body and the decision come from packages/checks in this
+      # repository, which is unit-tested. This step only runs pnpm and gh.
+      # It comments again only when the set of open advisories has changed,
+      # so an advisory that stays open does not produce a comment every week.
+      # If pnpm audit returns no advisory data, the step fails closed.
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        REPORT: ${{ github.action_path }}/../../../packages/checks/bin/audit-issue.mjs
+      run: |
+        set -euo pipefail
+        title='Dependency audit: open advisories'
+        pnpm audit --json > "$RUNNER_TEMP/audit.json" || true
+        node "$REPORT" "$RUNNER_TEMP/audit.json" "$RUNNER_TEMP/body.md" > "$RUNNER_TEMP/report.txt"
+        status=$(grep '^status=' "$RUNNER_TEMP/report.txt" | cut -d= -f2)
+        blocking=$(grep '^blocking=' "$RUNNER_TEMP/report.txt" | cut -d= -f2)
+        key=$(grep '^key=' "$RUNNER_TEMP/report.txt" | cut -d= -f2)
+        if [ "$status" = no-data ]; then
+          echo "::error::pnpm audit returned no advisory data; failing closed."
+          exit 1
+        fi
+
+        existing=$(gh issue list -R "$REPO" --state open --search "in:title \"$title\"" \
+          --json number,title --jq "[.[] | select(.title == \"$title\")][0].number // empty")
+        last=""
+        if [ -n "$existing" ]; then
+          last=$(gh issue view "$existing" -R "$REPO" --json body,comments \
+            --jq '[.body, .comments[].body] | join("\n")' \
+            | grep -o 'audit-key: [0-9a-z]*' | tail -n 1 | cut -d' ' -f2 || true)
+        fi
+        marker="<!-- audit-key: $key -->"
+
+        if [ "$status" = clean ]; then
+          echo "No open advisories."
+          if [ -n "$existing" ] && [ "$last" != clean ]; then
+            printf '%s\n\n%s\n' \
+              "The weekly audit found no open advisories ($RUN_URL). This issue can be closed." \
+              "$marker" > "$RUNNER_TEMP/clean.md"
+            gh issue comment "$existing" -R "$REPO" --body-file "$RUNNER_TEMP/clean.md"
+          fi
+          exit 0
+        fi
+
+        printf '\nRun: %s\n\n%s\n' "$RUN_URL" "$marker" >> "$RUNNER_TEMP/body.md"
+        if [ -z "$existing" ]; then
+          gh issue create -R "$REPO" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+        elif [ "$last" != "$key" ]; then
+          gh issue comment "$existing" -R "$REPO" --body-file "$RUNNER_TEMP/body.md"
+        else
+          echo "Open advisories are unchanged since the last report; not commenting."
+        fi
+        if [ "$blocking" = true ]; then
+          echo "::warning::High or critical advisories are open; see the tracking issue."
+        fi
