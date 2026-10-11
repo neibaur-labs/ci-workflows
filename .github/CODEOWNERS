@@ -1,0 +1,14 @@
+# CODEOWNERS for neibaur-labs/ci-workflows
+#
+# Every repository that pins an action here runs this code in its CI, so every
+# path is owned by the maintainer individually, not by a team.
+#
+# This repository is public, and GitHub's push rulesets (which restrict who may
+# push given paths) are available only for private and internal repositories.
+# Code-owner review on pull requests is the control that replaces it here.
+
+* @neibaur
+
+/.github/          @neibaur
+/packages/checks/  @neibaur
+/tests/actions/    @neibaur
