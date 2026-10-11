@@ -1,6 +1,7 @@
 # checks
 
-The decision logic of the `audit-gate` action, as tested code.
+The decision logic of the `audit-gate` and `dependency-audit` actions, as
+tested code.
 
 - `src/audit-gate.ts` compares two `pnpm audit --json` results, the base branch
   and the pull request, and reports the high or critical advisories the pull
@@ -15,3 +16,7 @@ The decision logic of the `audit-gate` action, as tested code.
   node packages/checks/bin/audit-gate.mjs pull-request base.json head.json
   node packages/checks/bin/audit-gate.mjs branch head.json
   ```
+- `src/audit-issue.ts` turns one `pnpm audit --json` result into the body of the
+  weekly tracking issue and a key that changes only when the open advisories
+  change. `bin/audit-issue.mjs` is the command the `dependency-audit` action
+  calls.
