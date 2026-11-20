@@ -39,7 +39,6 @@
       "postcss": "8.5.23",
       "nanoid": "3.3.19",
       "source-map-js": "1.2.2",
-      "vite@8.0.16": "8.1.7",
       "why-is-node-running": "3.2.1"
     }
   },
