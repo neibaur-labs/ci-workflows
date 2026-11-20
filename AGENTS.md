@@ -44,8 +44,9 @@ data. It is not a product and has no application code.
   user input, string arguments to setTimeout/setInterval, or execution of
   user-provided code. These are also banned by lint and CI; do not weaken those
   rules.
-- Never read, write, copy, print, or echo files matching: .env*, _credential_,
-  _secret_, _token_, *.pem, _.key, id_rsa_, .npmrc auth lines, or anything
+- Never read, write, copy, print, or echo files matching: `.env*`,
+  `*credential*`, `*secret*`, `*token*`, `*.pem`, `*.key`, `id_rsa*`, `.npmrc`
+  auth lines, or anything
   under ~/.ssh or cloud config directories. If a task seems to require this,
   STOP and ask.
 - Never take an irreversible real-world action on your own, and never invent a
@@ -169,7 +170,7 @@ validate`, `pnpm audit`), then either wait for the maintainer's explicit
   most an automated reviewer such as Copilot code review will read. If the
   work spans more concerns or would pass the ceiling, stop and report how you
   would split it.
-- Branch naming: feat/_, fix/_, chore/_, test/_, docs/*.
+- Branch naming: `feat/*`, `fix/*`, `chore/*`, `test/*`, `docs/*`.
 - Conventional Commits, e.g. `feat(engine): add pipe operator to tokenizer`.
 - Tests-first commit structure: commit 1 = failing tests that specify the
   behavior; commit 2+ = implementation turning them green.
