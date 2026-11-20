@@ -1,23 +1,57 @@
 # dependabot-auto-merge.yml
 #
 # Turns on GitHub's own auto-merge for Dependabot pull requests that contain
-# only minor or patch npm updates. GitHub then merges the PR once every required
-# status check passes. If a check fails, nothing merges and the PR stays open.
+# only minor or patch updates in an ecosystem the repository has armed (npm, uv,
+# Maven). GitHub then merges the PR once every required status check passes. If
+# a check fails, nothing merges and the PR stays open.
 #
-# Policy: neibaur-labs/agent-ops docs/dependabot-auto-merge.md. This is the only
-# automated merge in the system. AI agents still never merge.
+# This file is two things. It is a reusable workflow (workflow_call) that every
+# repository calls, so the logic has one copy. It is also this repository's own
+# caller (pull_request), which arms npm only.
+#
+# Policy: neibaur-labs/agent-ops docs/dependabot-auto-merge.md and GOVERNANCE.md
+# section 10. This is the only automated merge in the system. AI agents still
+# never merge.
 #
 # What is NOT auto-merged, and waits for the maintainer:
-#   - any PR containing a major update
-#   - GitHub Actions updates (they change CI itself)
+#   - any PR containing a major update (one major excludes the whole PR)
+#   - any update to a prerelease version
+#   - GitHub Actions updates (they change CI itself), whatever the caller passes
 #   - any PR not opened by Dependabot
+#   - an ecosystem the caller did not arm
+#
+# The 7-day cooldown is Dependabot's, set in each repository's dependabot.yml.
 #
 # Requires the repository setting "Allow auto-merge" (Settings > General).
-# To stop it: turn that setting off, or disable this workflow
+# To stop it: turn that setting off, or disable the calling workflow
 # (gh workflow disable dependabot-auto-merge.yml).
+#
+# A caller is thin. It owns the trigger, so it owns the paths filter, and it
+# grants the two permissions the job needs (a called workflow cannot exceed
+# what its caller grants):
+#
+#   name: dependabot-auto-merge
+#   on:
+#     pull_request:
+#       paths: ['**/package.json', pnpm-lock.yaml, uv.lock, pyproject.toml, '**/pom.xml']
+#   permissions: {}
+#   jobs:
+#     auto-merge:
+#       permissions: { contents: write, pull-requests: write }
+#       uses: neibaur-labs/ci-workflows/.github/workflows/dependabot-auto-merge.yml@<sha>
+#       with: { ecosystems: 'npm,uv' }
 name: dependabot-auto-merge
 
 on:
+  workflow_call:
+    inputs:
+      ecosystems:
+        description: >-
+          Ecosystems to arm, separated by commas: npm, uv, maven. Anything else,
+          including github-actions, fails the run.
+        type: string
+        required: false
+        default: 'npm'
   pull_request:
     # A run that does not start is not billed, and a job that runs for 10
     # seconds bills a whole minute. npm updates change a manifest and the
@@ -46,17 +80,77 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Enable auto-merge (npm minor and patch only)
-        # update-type is the HIGHEST semver change in the PR, so a group that
-        # contains any major update is excluded.
-        if: >-
-          steps.metadata.outputs.package-ecosystem == 'npm_and_yarn' &&
-          (steps.metadata.outputs.update-type == 'version-update:semver-minor' ||
-           steps.metadata.outputs.update-type == 'version-update:semver-patch')
+      - name: Decide whether to arm
+        id: decide
+        # Everything below arrives through env and is treated as data. The
+        # ecosystem name is the one Dependabot's branch name carries
+        # (npm_and_yarn, uv, maven, github_actions). update-type is the HIGHEST
+        # semver change in the PR; the per-dependency list must agree, and every
+        # target version must be a stable release, so a prerelease is never armed.
+        # Anything missing or unreadable does not arm.
+        env:
+          ARMED: ${{ inputs.ecosystems || 'npm' }}
+          ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+          DEPS_JSON: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        run: |
+          set -euo pipefail
+          emit() {
+            echo "arm=$1" >> "$GITHUB_OUTPUT"
+            echo "reason=$2" >> "$GITHUB_OUTPUT"
+            echo "$2"
+          }
+
+          armed=""
+          IFS=', ' read -r -a tokens <<< "${ARMED:-}"
+          for token in "${tokens[@]}"; do
+            case "$token" in
+              '') ;;
+              npm) armed="$armed npm_and_yarn" ;;
+              uv) armed="$armed uv" ;;
+              maven) armed="$armed maven" ;;
+              *) echo "::error::Unknown ecosystem in the ecosystems input (allowed: npm, uv, maven)"; exit 1 ;;
+            esac
+          done
+
+          if [ -z "${ECOSYSTEM:-}" ]; then
+            emit false "no ecosystem in the metadata"; exit 0
+          fi
+          case "$armed " in
+            *" $ECOSYSTEM "*) ;;
+            *) emit false "ecosystem $ECOSYSTEM is not armed"; exit 0 ;;
+          esac
+          case "${UPDATE_TYPE:-}" in
+            version-update:semver-minor | version-update:semver-patch) ;;
+            *) emit false "highest update type is ${UPDATE_TYPE:-unknown}, not minor or patch"; exit 0 ;;
+          esac
+
+          if ! printf '%s' "${DEPS_JSON:-}" | jq -e '
+              type == "array" and length > 0 and
+              all(.[]; (.updateType == "version-update:semver-minor" or
+                        .updateType == "version-update:semver-patch") and
+                       ((.newVersion // "") | type == "string" and length > 0))
+            ' > /dev/null 2>&1; then
+            emit false "dependency list is missing, empty, or has an entry that is not a minor or patch"
+            exit 0
+          fi
+
+          stable='^v?[0-9]+(\.[0-9]+)*(\.(RELEASE|Final))?(-jre|-android)?$'
+          while IFS= read -r version; do
+            if ! [[ "$version" =~ $stable ]]; then
+              emit false "target version is not a plain stable release"; exit 0
+            fi
+          done < <(printf '%s' "$DEPS_JSON" | jq -r '.[].newVersion' | tr -d '\r')
+
+          emit true "minor or patch update in armed ecosystem $ECOSYSTEM"
+
+      - name: Enable auto-merge
+        if: steps.decide.outputs.arm == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --auto --squash "$PR_URL"
+        run: |
+          gh pr merge --auto --squash "$PR_URL"
 
       - name: Summary
         if: always()
@@ -64,10 +158,14 @@ jobs:
           ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
           UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
           NAMES: ${{ steps.metadata.outputs.dependency-names }}
+          ARM: ${{ steps.decide.outputs.arm }}
+          REASON: ${{ steps.decide.outputs.reason }}
         run: |
           {
             echo "### dependabot-auto-merge"
             echo "- ecosystem: ${ECOSYSTEM:-unknown}"
             echo "- highest update type: ${UPDATE_TYPE:-unknown}"
             echo "- dependencies: ${NAMES:-unknown}"
+            echo "- armed: ${ARM:-no decision}"
+            echo "- reason: ${REASON:-none}"
           } >> "$GITHUB_STEP_SUMMARY"
