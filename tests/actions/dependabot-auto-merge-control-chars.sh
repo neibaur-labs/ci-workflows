@@ -34,4 +34,6 @@ got="$(arm_for '1.3.0\r')"
 expect "trailing carriage return does not arm" 0 "$([ "$got" = false ]; echo $?)" "arm=$got"
 got="$(arm_for '1.3.0\n9.9.9')"
 expect "newline inside a version does not arm" 0 "$([ "$got" = false ]; echo $?)" "arm=$got"
+got="$(arm_for 'evil\n1.3.0')"
+expect "junk line before a valid version does not arm" 0 "$([ "$got" = false ]; echo $?)" "arm=$got"
 finish
