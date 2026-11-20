@@ -125,22 +125,19 @@ jobs:
             *) emit false "highest update type is ${UPDATE_TYPE:-unknown}, not minor or patch"; exit 0 ;;
           esac
 
+          # The version pattern is matched inside jq, against the whole string
+          # (\z), so a control character in a version cannot be cleaned away
+          # or split into several valid-looking lines.
           if ! printf '%s' "${DEPS_JSON:-}" | jq -e '
               type == "array" and length > 0 and
               all(.[]; (.updateType == "version-update:semver-minor" or
                         .updateType == "version-update:semver-patch") and
-                       ((.newVersion // "") | type == "string" and length > 0))
+                       ((.newVersion // "") | type == "string" and
+                        test("^v?[0-9]+(\\.[0-9]+)*(\\.(RELEASE|Final))?(-jre|-android)?\\z")))
             ' > /dev/null 2>&1; then
-            emit false "dependency list is missing, empty, or has an entry that is not a minor or patch"
+            emit false "dependency list is missing, empty, or has an entry that is not a stable minor or patch"
             exit 0
           fi
-
-          stable='^v?[0-9]+(\.[0-9]+)*(\.(RELEASE|Final))?(-jre|-android)?$'
-          while IFS= read -r version; do
-            if ! [[ "$version" =~ $stable ]]; then
-              emit false "target version is not a plain stable release"; exit 0
-            fi
-          done < <(printf '%s' "$DEPS_JSON" | jq -r '.[].newVersion' | tr -d '\r')
 
           emit true "minor or patch update in armed ecosystem $ECOSYSTEM"
 
