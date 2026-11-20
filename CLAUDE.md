@@ -15,7 +15,9 @@ repository. Read it fully before acting. Key reminders:
   `releasing-shared-ci` skill in a maintainer-started session; never move or
   delete a tag.
 - Commit and push your own work to feature branches. Protected paths
-  (`.github/**`, `AGENTS.md`, `CLAUDE.md`, `LICENSE`, and the skill paths) are committed and pushed by you
+  (`.github/**`, `AGENTS.md`, `CLAUDE.md`, `LICENSE`, the skill paths,
+  `.claude/agents/**`, and the community-health defaults; the full list is
+  AGENTS.md §3) are committed and pushed by you
   too when the maintainer started the session, in their own commits and listed
   in the PR description. Unattended runs never commit them: they leave a patch
   in the PR description (AGENTS.md §3).
