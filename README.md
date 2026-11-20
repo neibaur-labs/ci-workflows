@@ -78,12 +78,51 @@ jobs:
       - uses: neibaur-labs/ci-workflows/.github/actions/dependency-audit@<sha>
 ```
 
+## Reusable workflow
+
+### `dependabot-auto-merge`
+
+The one place that holds the logic for turning on GitHub auto-merge for
+Dependabot pull requests. A repository calls it from a thin workflow. It arms a
+pull request only when every one of these holds:
+
+- Dependabot opened it;
+- its ecosystem is in the `ecosystems` input: `npm`, `uv`, `maven` (default
+  `npm`, so an existing caller does not change). Anything else, including
+  `github-actions`, fails the run;
+- every update is minor or patch (one major excludes the whole pull request) and
+  every target version is a plain stable release, never a prerelease.
+
+It then runs `gh pr merge --auto --squash`, so the required checks gate the
+merge. The 7-day cooldown stays in each repository's `dependabot.yml`. The job
+never reads or interpolates pull request text, and checks out no code.
+
+```yaml
+name: dependabot-auto-merge
+on:
+  pull_request:
+    paths: ['**/package.json', pnpm-lock.yaml, uv.lock, pyproject.toml, '**/pom.xml']
+permissions: {}
+jobs:
+  auto-merge:
+    permissions: { contents: write, pull-requests: write }
+    uses: neibaur-labs/ci-workflows/.github/workflows/dependabot-auto-merge.yml@<sha>
+    with: { ecosystems: 'npm,uv' }
+```
+
+The caller owns the trigger, so it owns the `paths` filter. Arm `uv` or `maven`
+only in a repository whose required checks run that language's tests
+(`agent-ops` `GOVERNANCE.md` section 10). This repository also uses the file as
+its own npm caller.
+
 ## Why actions and not reusable workflows
 
 A job that calls a reusable workflow reports its check as
 `caller / called job`. The repositories here are required to pass a check
 named exactly `security`. A composite action runs as a step inside the
 repository's own `security` job, so the check name does not change.
+`dependabot-auto-merge` is not a required check, so it can be a reusable
+workflow.
 
 ## Pinning
 
@@ -95,8 +134,8 @@ Dependabot can open.
 
 - `packages/checks` is the decision logic of the audit gate, with unit tests
   (`pnpm test`).
-- `tests/actions/` extracts each step's script from the `action.yml` files and
-  runs that exact text against fixtures, including the cases that must fail.
+- `tests/actions/` extracts each step's script from the `action.yml` files (and
+  from the `dependabot-auto-merge` workflow) and runs that exact text against fixtures, including the cases that must fail.
   `bash tests/actions/run-all.sh` runs them; the gitleaks test needs Docker.
 - The `security` job of this repository's own CI runs both actions from the
   checkout.
